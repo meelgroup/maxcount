@@ -202,6 +202,8 @@ with open(inputFilename, 'r') as inputFile:
 				raise Exception('Non-integer counting variable on line '+str(lineNumber))
 numCountingVars = len(countingVars)
 
+printV(2, "c Counting vars:", countingVars)
+printV(2, "c Maximisation vars:", maxVars)
 printV(2, 'c Formula has %d maximization and %d counting variables' % (len(maxVars), numCountingVars))
 
 ### sample from assignments to maximization variables
@@ -228,6 +230,9 @@ def sampleFromSelfComposition():
 	sampleCommand += ' --samples '+str(uniGenNumSamples)
 	sampleCommand += ' --sampleout '+sampleFilename
 	sampleCommand += ' '+kfoldFilename+' > '+outputFilename
+
+	timepoint = time.time()
+	print("Running ApproxMC: %s" % sampleCommand)
 	os.system(sampleCommand)
 	printV(2, 'completed in %d s' % (time.time() - timepoint))
 
@@ -291,7 +296,9 @@ if len(samples) == 0:
 ### count solutions for each sample
 
 # construct 1-fold self-composition and extract clauses
-os.system('python selfcomposition.py 1 '+inputFilename+' > '+onefoldFilename)
+torun = 'python selfcomposition.py 1 '+inputFilename+' > '+onefoldFilename
+printV(2, "c Runing self composition: ", torun)
+os.system(torun)
 
 clauses = []
 with open(onefoldFilename, 'r') as onefoldFile:
