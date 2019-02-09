@@ -12,6 +12,7 @@ import pycryptosat
 import time
 import itertools
 import argparse
+import re
 
 ### parse command-line arguments
 
@@ -28,7 +29,7 @@ parser.add_argument('k', help='number of copies of the formula in the self-compo
 parser.add_argument('--seed', help='random seed to use', metavar='s', type=int, default=0)
 parser.add_argument('--runIndex', help='number included in temporary file names (useful for running multiple instances simultaneously)', metavar='r', type=int, default=0)
 parser.add_argument('--verbosity', help='information to output: 0 = max-count estimate and witness; 1 = also max-count bounds; 2 = everything', metavar='level', type=int, choices=[0,1,2], default=2)
-parser.add_argument('--scalmc', help='path to scalmc binary', metavar='path', default='./scalmc')
+parser.add_argument('--scalmc', help='path to scalmc binary', metavar='path', default='./approxmc')
 
 # sampling
 parser.add_argument('--samples', help='number of samples to generate from self-composition', metavar='n', type=int, default=20)
@@ -218,15 +219,14 @@ def sampleFromSelfComposition():
 	printV(2, 'c Sampling with tolerance (1+%f)... ' % sampleEpsilon, False)
 	sys.stdout.flush()
 
-	timepoint = time.time()
-	sampleCommand = scalmcPath+' --cuspLogFile='+cuspLogFilename
-	sampleCommand += ' --multisample='+('1' if useMultisampling else '0')
-	sampleCommand += ' --random='+str(seed)
-	sampleCommand += ' --pivotAC='+str(samplingPivotAC)
-	sampleCommand += ' --tApproxMC='+str(samplingTApproxMC)
-	sampleCommand += ' --kappa='+str(kappa)
-	sampleCommand += ' --samples='+str(uniGenNumSamples)
-	sampleCommand += ' --sampleFile='+sampleFilename
+	sampleCommand = scalmcPath+' --log '+cuspLogFilename
+	sampleCommand += ' --multisample '+('1' if useMultisampling else '0')
+	sampleCommand += ' --seed '+str(seed)
+	sampleCommand += ' --threshold '+str(samplingPivotAC)  # pivot AC
+	sampleCommand += ' --measure '+str(samplingTApproxMC)  # measurements
+	sampleCommand += ' --kappa '+str(kappa)
+	sampleCommand += ' --samples '+str(uniGenNumSamples)
+	sampleCommand += ' --sampleout '+sampleFilename
 	sampleCommand += ' '+kfoldFilename+' > '+outputFilename
 	os.system(sampleCommand)
 	printV(2, 'completed in %d s' % (time.time() - timepoint))
@@ -237,25 +237,29 @@ def sampleFromSelfComposition():
 		formulaUnsat = False
 		with open(outputFilename, 'r') as outputFile:
 			for line in outputFile:
-				if line == 'The input formula is unsatisfiable.\n':
+				printV(3, "ApproxMC output line is:", line.strip())
+				if 'UNSAT' in line:
 					formulaUnsat = True
 					break
 		if not formulaUnsat:
 			with open(sampleFilename, 'r') as sampleFile:
 				for line in sampleFile:
-					fields = line[1:].split(':')[0].split()
-					if fields[-1] != '0':
-						raise Exception('Malformed sample file from scalmc')
-					literals = set(map(lambda f: int(f), fields[:-1]))
-					sample = []
+					m = re.match("(.*):(.*) 0$", line)
+					if m is None:
+						print("ERROR: Wrong sample line from sample file:", line)
+						exit(-1)
+					lits = m.group(2).strip().split(' ')
+					literals = set(map(lambda f: int(f), lits))
+					sample_on_maxvars = []
 					for var in maxVars:
 						if var in literals:
-							sample.append(var)
+							sample_on_maxvars.append(var)
 						elif -var in literals:
-							sample.append(-var)
+							sample_on_maxvars.append(-var)
 						else:
 							raise Exception('Incomplete sample from scalmc')
-					samples.add(tuple(sample))
+					printV(4, "Sample's maxVars:",  sample_on_maxvars)
+					samples.add(tuple(sample_on_maxvars))
 	except IOError as e:
 		raise Exception('Sampling did not complete successfully')
 
@@ -299,10 +303,10 @@ with open(onefoldFilename, 'r') as onefoldFile:
 def countSampleWithHashing(sample, epsilon=countEpsilon, confidence=perSampleCountingConfidence):
 	pivotAC = int(math.ceil(9.84 * (1 + (epsilon / (1.0 + epsilon))) * (1 + (1.0/epsilon)) * (1 + (1.0/epsilon))))
 	tApproxMC = int(math.ceil(17 * log2(3.0 / (1 - confidence))))
-	countCommand = scalmcPath+' --cuspLogFile='+cuspLogFilename
-	countCommand += ' --random='+str(seed)
-	countCommand += ' --pivotAC='+str(pivotAC)
-	countCommand += ' --tApproxMC='+str(tApproxMC)
+	countCommand = scalmcPath+' --log '+cuspLogFilename
+	countCommand += ' --seed '+str(seed)
+	countCommand += ' --threshold '+str(pivotAC)
+	countCommand += ' --measure '+str(tApproxMC)
 	countCommand += ' '+countFilename+' > '+outputFilename
 	# assign maximization variables by adding unit clauses
 	os.system('cp '+onefoldFilename+' '+countFilename)
@@ -315,12 +319,13 @@ def countSampleWithHashing(sample, epsilon=countEpsilon, confidence=perSampleCou
 	hashCount = -1
 	with open(outputFilename, 'r') as outputFile:
 		for line in outputFile:
-			if line[:24] == 'Number of solutions is: ':
+			if 'Number of solutions is: ' in line:
 				if cellCount >= 0:
 					raise Exception('Malformed output from scalmc')
-				fields = line[24:].split('x')
-				cellCount = int(fields[0])
-				hashCount = int(fields[1][3:])
+				d = re.match("^.*Number of solutions is: ([^x]*) x 2.([^x]*)$", line)
+				assert d is not None, "ApproxMC output is weird..."
+				cellCount = int(d.group(1))
+				hashCount = int(d.group(2))
 			elif line == 'The input formula is unsatisfiable.\n':
 				if cellCount >= 0:
 					raise Exception('Malformed output from scalmc')
