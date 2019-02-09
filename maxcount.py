@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # MaxCount 1.0.0
 # An approximate Max#SAT solver
 # Written by Daniel Fremont and Markus Rabe
